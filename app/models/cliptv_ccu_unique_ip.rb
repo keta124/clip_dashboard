@@ -1,0 +1,2 @@
+class CliptvCcuUniqueIp < ApplicationRecord
+end

@@ -10,15 +10,32 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema.define(version: 20171227092720) do
+ActiveRecord::Schema.define(version: 20171227173231) do
 
   # These are extensions that must be enabled in order to support this database
   enable_extension "plpgsql"
+
+  create_table "cliptv_ccu_unique_ips", force: :cascade do |t|
+    t.datetime "timestamp", null: false
+    t.integer "ccu", default: 0
+    t.datetime "created_at", null: false
+    t.datetime "updated_at", null: false
+  end
 
   create_table "cliptv_channel_ccus", force: :cascade do |t|
     t.datetime "timestamp", null: false
     t.string "channel"
     t.integer "ccu", default: 0
+    t.datetime "created_at", null: false
+    t.datetime "updated_at", null: false
+  end
+
+  create_table "cliptv_datacenter_ccus", force: :cascade do |t|
+    t.datetime "timestamp", null: false
+    t.string "datacenter", null: false
+    t.integer "ccu_all", default: 0
+    t.integer "ccu_live", default: 0
+    t.integer "ccu_vod", default: 0
     t.datetime "created_at", null: false
     t.datetime "updated_at", null: false
   end
