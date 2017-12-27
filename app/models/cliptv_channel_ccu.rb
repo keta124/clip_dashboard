@@ -1,0 +1,2 @@
+class CliptvChannelCcu < ApplicationRecord
+end
