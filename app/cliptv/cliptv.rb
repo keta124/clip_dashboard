@@ -6,8 +6,8 @@ class Cliptv
     end
 
     def get_ccu_uniq_ip
-      gte = "now-200m"
-      lte = "now-10m"
+      gte = "now-7d/d"
+      lt = "now/d"
       client = Elasticsearch::Client.new host:'192.168.142.100:9200'
       index = 'logstash-*'
       body = {
@@ -24,7 +24,7 @@ class Cliptv
               "range": {
                 "time_write_log": {
                   "gte": "#{gte}",
-                  "lte": "#{lte}",
+                  "lt": "#{lt}",
                   "format": "epoch_second"
                 }
               }
@@ -57,7 +57,7 @@ class Cliptv
       CliptvCcuUniqueIp.bulk_insert do |worker|
         res.each do |e|
           key = e["key"].to_i
-          timestamp = Time.at(key/1000).strftime "%Y-%m-%d %H:%M:%S %z"
+          timestamp = Time.at(key/1000).strftime "%Y-%m-%d %H:%M:%S"
           ccu = e["num_ip"]["value"]
           worker.add timestamp: timestamp, ccu: ccu
         end
@@ -66,8 +66,8 @@ class Cliptv
 
     def get_ccu_datacenter
       datacenters =['vdc1', 'fpt1', 'vt1', 'vt2', '']
-      gte = "now-2h"
-      lte = "now-1h"
+      gte = "now-7d/d"
+      lt = "now/d"
       add_config_query = "response:[200 TO 299] AND (filetype.raw:\"m4s\" OR filetype.raw:\"ts\") NOT avtype.raw:\"ao\" NOT avtype.raw:\"audio\""
       datacenters.each do |dc|
         client = Elasticsearch::Client.new host:'192.168.142.100:9200'
@@ -86,7 +86,7 @@ class Cliptv
                 "range": {
                   "time_write_log": {
                     "gte": "#{gte}",
-                    "lte": "#{lte}",
+                    "lt": "#{lt}",
                     "format": "epoch_millis"
                   }
                 }
@@ -98,11 +98,7 @@ class Cliptv
               "date_histogram": {
                 "field": "time_write_log",
                 "interval": "10s",
-                "time_zone": "Asia/Jakarta",
-                "extended_bounds": {
-                  "min": "#{gte}",
-                  "max": "#{lte}"
-                }
+                "time_zone": "Asia/Jakarta"
               },
               "aggs": {
                 "types": {
@@ -124,8 +120,8 @@ class Cliptv
         CliptvDatacenterCcu.bulk_insert do |worker|
           res.each do |e|
             key = e["key"].to_i
-            if key % 300000 == 0
-              timestamp = Time.at(key/1000).strftime "%Y-%m-%d %H:%M:%S %z"
+            if key % 60000 == 0
+              timestamp = Time.at(key/1000).strftime "%Y-%m-%d %H:%M:%S"
               ccu = e["types"]["buckets"].map{|k| [k["key"], k["doc_count"]] }.to_h
               dc = "all" if dc == ''
               worker.add timestamp: timestamp, datacenter: dc, ccu_all: ccu["all"], ccu_live: ccu["live"],ccu_vod: ccu["vod"]
@@ -137,8 +133,8 @@ class Cliptv
 
     def get_data_es_channel 
       add_config_query = "response:[200 TO 299] AND (filetype.raw:\"m4s\" OR filetype.raw:\"ts\") NOT avtype.raw:\"ao\" NOT avtype.raw:\"audio\""
-      gte = "now-2h"
-      lte = "now-1h"
+      gte = "now-2d/d"
+      lt = "now/d"
       client = Elasticsearch::Client.new host:'192.168.142.100:9200'
       index = 'logstash-*'
       body= {
@@ -151,19 +147,12 @@ class Cliptv
               }
             },
             "filter": {
-              "bool": {
-                "must": [
-                  {
-                    "range": {
-                      "time_write_log": {
-                        "gte": "#{gte}",
-                        "lte": "#{lte}",
-                        "format": "epoch_millis"
-                      }
-                    }
-                  }
-                ],
-                "must_not": []
+              "range": {
+                "time_write_log": {
+                  "gte": "#{gte}",
+                  "lt": "#{lt}",
+                  "format": "epoch_millis"
+                }
               }
             }
           }
@@ -174,11 +163,7 @@ class Cliptv
             "date_histogram": {
               "field": "time_write_log",
               "interval": "10s",
-              "time_zone": "Asia/Jakarta",
-              "extended_bounds": {
-                "min": "#{gte}",
-                "max": "#{lte}"
-              }
+              "time_zone": "Asia/Jakarta"
             },
             "aggs": {
               "channel": {
@@ -197,23 +182,20 @@ class Cliptv
       response = client.search index: index, body: body
       buckets =response["aggregations"]["timestamp"]["buckets"]
       buckets.pop(1)
-      buckets.each do |bucket|
-        key = bucket["key"].to_i
-        if key % 300000 == 0
-          timestamp = Time.at(key/1000).strftime "%Y-%m-%d %H:%M:%S %z"
-          channel_buckets = bucket["channel"]["buckets"]
-          channels = {}
-          CHANNELS.each do |e|
-            channels[e] =0
-          end
-          channel_buckets.each do |channel_bucket|
-            channel_map_name = map_name_channel(channel_bucket["key"])
-            if channel_map_name.size !=0
-              channel = channel_map_name.first
-              channels[channel] += channel_bucket["doc_count"].to_i
+      CliptvChannelCcu.bulk_insert do |worker|
+        buckets.each do |bucket|
+          key = bucket["key"].to_i
+          if key % 60000 == 0
+            timestamp = Time.at(key/1000).strftime "%Y-%m-%d %H:%M:%S %z"
+            channel_buckets = bucket["channel"]["buckets"]
+            channels = {}
+            channel_buckets.each do |channel_bucket|
+              channel_map_name = map_name_channel(channel_bucket["key"])
+              if channel_map_name.size !=0
+                channel = channel_map_name.first
+                channels[channel] = (channels[channel] ||0 ) + channel_bucket["doc_count"].to_i
+              end
             end
-          end
-          CliptvChannelCcu.bulk_insert do |worker|
             channels.each do |k, v|
               worker.add timestamp: timestamp, channel: k, ccu: v
             end
@@ -222,5 +204,8 @@ class Cliptv
       end
     end
 
+    def test_data
+      result =CliptvChannelCcu.select{|c| c.timestamp % 600000 ==0 }
+    end
   end
 end
