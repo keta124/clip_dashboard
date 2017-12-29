@@ -6,7 +6,7 @@ class Cliptv
     end
 
     def get_ccu_uniq_ip
-      gte = "now-7d/d"
+      gte = "now-1d/d"
       lt = "now/d"
       client = Elasticsearch::Client.new host:'192.168.142.100:9200'
       index = 'logstash-*'
@@ -52,21 +52,26 @@ class Cliptv
       }
       response = client.search index: index, body: body
       res = response["aggregations"]["timestamp"]["buckets"]
-      res.pop(1)
-      puts res
-      CliptvCcuUniqueIp.bulk_insert do |worker|
-        res.each do |e|
-          key = e["key"].to_i
-          timestamp = Time.at(key/1000).strftime "%Y-%m-%d %H:%M:%S"
-          ccu = e["num_ip"]["value"]
-          worker.add timestamp: timestamp, ccu: ccu
-        end
+      data =[]
+      # CliptvCcuUniqueIp.bulk_insert do |worker|
+      #   res.each do |e|
+      #     key = e["key"].to_i
+      #     timestamp = Time.at(key/1000).strftime "%Y-%m-%d %H:%M:%S"
+      #     ccu = e["num_ip"]["value"]
+      #     worker.add timestamp: timestamp, ccu: ccu
+      #   end
+      # end
+      res.each do |e|
+        timestamp = (e["key"].to_i / 1000).to_i
+        ccu = e["num_ip"]["value"]
+        data << { series: 'ccu_unique_ip', values: { value: ccu }, timestamp: timestamp }
       end
+      InfluxdbConnection.connection.write_points data
     end
 
     def get_ccu_datacenter
       datacenters =['vdc1', 'fpt1', 'vt1', 'vt2', '']
-      gte = "now-7d/d"
+      gte = "now-1d/d"
       lt = "now/d"
       add_config_query = "response:[200 TO 299] AND (filetype.raw:\"m4s\" OR filetype.raw:\"ts\") NOT avtype.raw:\"ao\" NOT avtype.raw:\"audio\""
       datacenters.each do |dc|
@@ -117,23 +122,35 @@ class Cliptv
         response = client.search index: index, body: body
         res = response["aggregations"]["timestamp"]["buckets"]
         res.pop(1)
-        CliptvDatacenterCcu.bulk_insert do |worker|
-          res.each do |e|
-            key = e["key"].to_i
-            if key % 60000 == 0
-              timestamp = Time.at(key/1000).strftime "%Y-%m-%d %H:%M:%S"
-              ccu = e["types"]["buckets"].map{|k| [k["key"], k["doc_count"]] }.to_h
-              dc = "all" if dc == ''
-              worker.add timestamp: timestamp, datacenter: dc, ccu_all: ccu["all"], ccu_live: ccu["live"],ccu_vod: ccu["vod"]
-            end
+        # CliptvDatacenterCcu.bulk_insert do |worker|
+        #   res.each do |e|
+        #     key = e["key"].to_i
+        #     if key % 60000 == 0
+        #       timestamp = Time.at(key/1000).strftime "%Y-%m-%d %H:%M:%S"
+        #       ccu = e["types"]["buckets"].map{|k| [k["key"], k["doc_count"]] }.to_h
+        #       dc = "all" if dc == ''
+        #       worker.add timestamp: timestamp, datacenter: dc, ccu_all: ccu["all"], ccu_live: ccu["live"],ccu_vod: ccu["vod"]
+        #     end
+        #   end
+        # end
+        data =[]
+        res.each do |e|
+          timestamp = (e["key"].to_i / 1000).to_i
+          if timestamp % 60 == 0
+            ccu = e["types"]["buckets"].map{|k| [k["key"], k["doc_count"]] }.to_h
+            dc = "all" if dc == ''
+            data << { series: 'ccu_datacenter', values: { value: ccu["all"] || 0 }, tags:   { type: 'all' }, timestamp: timestamp }
+            data << { series: 'ccu_datacenter', values: { value: ccu["live"] || 0}, tags:   { type: 'live' }, timestamp: timestamp }
+            data << { series: 'ccu_datacenter', values: { value: ccu["vod"] || 0}, tags:   { type: 'vod' }, timestamp: timestamp }
           end
         end
+        InfluxdbConnection.connection.write_points data
       end
     end
 
-    def get_data_es_channel 
+    def get_ccu_channel 
       add_config_query = "response:[200 TO 299] AND (filetype.raw:\"m4s\" OR filetype.raw:\"ts\") NOT avtype.raw:\"ao\" NOT avtype.raw:\"audio\""
-      gte = "now-2d/d"
+      gte = "now-d/d"
       lt = "now/d"
       client = Elasticsearch::Client.new host:'192.168.142.100:9200'
       index = 'logstash-*'
@@ -180,32 +197,47 @@ class Cliptv
         }
       }
       response = client.search index: index, body: body
-      buckets =response["aggregations"]["timestamp"]["buckets"]
-      buckets.pop(1)
-      CliptvChannelCcu.bulk_insert do |worker|
-        buckets.each do |bucket|
-          key = bucket["key"].to_i
-          if key % 60000 == 0
-            timestamp = Time.at(key/1000).strftime "%Y-%m-%d %H:%M:%S %z"
-            channel_buckets = bucket["channel"]["buckets"]
-            channels = {}
-            channel_buckets.each do |channel_bucket|
-              channel_map_name = map_name_channel(channel_bucket["key"])
-              if channel_map_name.size !=0
-                channel = channel_map_name.first
-                channels[channel] = (channels[channel] ||0 ) + channel_bucket["doc_count"].to_i
-              end
+      res =response["aggregations"]["timestamp"]["buckets"]
+      res.pop(1)
+      # CliptvChannelCcu.bulk_insert do |worker|
+      #   buckets.each do |bucket|
+      #     key = bucket["key"].to_i
+      #     if key % 60000 == 0
+      #       timestamp = Time.at(key/1000).strftime "%Y-%m-%d %H:%M:%S %z"
+      #       channel_buckets = bucket["channel"]["buckets"]
+      #       channels = {}
+      #       channel_buckets.each do |channel_bucket|
+      #         channel_map_name = map_name_channel(channel_bucket["key"])
+      #         if channel_map_name.size !=0
+      #           channel = channel_map_name.first
+      #           channels[channel] = (channels[channel] ||0 ) + channel_bucket["doc_count"].to_i
+      #         end
+      #       end
+      #       channels.each do |k, v|
+      #         worker.add timestamp: timestamp, channel: k, ccu: v
+      #       end
+      #     end
+      #   end
+      # end
+      data =[]
+      res.each do |e|
+        timestamp = (e["key"].to_i / 1000).to_i
+        if timestamp % 60 == 0
+          channel_buckets = e["channel"]["buckets"]
+          channels = {}
+          channel_buckets.each do |channel_bucket|
+            channel_map_name = map_name_channel(channel_bucket["key"])
+            if channel_map_name.size !=0
+              channel = channel_map_name.first
+              channels[channel] = (channels[channel] ||0 ) + channel_bucket["doc_count"].to_i
             end
-            channels.each do |k, v|
-              worker.add timestamp: timestamp, channel: k, ccu: v
-            end
+          end
+          channels.each do |k, v|
+            data << { series: 'ccu_channel', values: { value: v }, tags:   { channel: k }, timestamp: timestamp }
           end
         end
       end
-    end
-
-    def test_data
-      result =CliptvChannelCcu.select{|c| c.timestamp % 600000 ==0 }
+      InfluxdbConnection.connection.write_points data
     end
   end
 end
