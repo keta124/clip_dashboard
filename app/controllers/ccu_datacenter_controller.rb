@@ -1,0 +1,2 @@
+class CcuDatacenterController < ApplicationController
+end

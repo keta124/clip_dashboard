@@ -1,0 +1,2 @@
+class CcuChannelController < ApplicationController
+end

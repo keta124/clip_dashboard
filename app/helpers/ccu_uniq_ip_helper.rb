@@ -1,0 +1,2 @@
+module CcuUniqIpHelper
+end
